@@ -338,6 +338,9 @@ dependencies = [
 [[package]]
 name = "minesweeper"
 version = "0.1.0"
+dependencies = [
+ "rand",
+]
 
 [[package]]
 name = "minesweeper-web"
