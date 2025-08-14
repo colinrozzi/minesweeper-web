@@ -39,6 +39,38 @@
             gap: 20px;
         }
 
+        .difficulty-presets {
+            display: flex;
+            gap: 8px;
+            padding: 4px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .preset-btn {
+            background: transparent;
+            color: #495057;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .preset-btn:hover {
+            background: #3498db;
+            color: white;
+        }
+
+        .preset-btn.active {
+            background: #3498db;
+            color: white;
+            box-shadow: 0 2px 4px rgba(52, 152, 219, 0.3);
+        }
+
         .game-config {
             display: flex;
             gap: 15px;
@@ -139,12 +171,17 @@
             font-weight: 700;
             font-size: 14px;
             background: #f8f9fa;
-            transition: background-color 0.1s ease;
+            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
             user-select: none;
         }
 
         .tile:hover {
             background: #e9ecef;
+        }
+
+        .tile:active {
+            transform: scale(0.95);
+            transition: transform 0.1s ease;
         }
 
         .tile.exposed {
@@ -199,6 +236,38 @@
             pointer-events: none;
         }
 
+        /* Game celebration animations */
+        .board.game-won {
+            animation: celebrate 0.6s ease-in-out;
+        }
+
+        .board.game-lost .tile.bomb {
+            animation: explode 0.4s ease-out;
+        }
+
+        @keyframes celebrate {
+            0%, 100% { transform: scale(1); }
+            25% { transform: scale(1.05) rotate(-1deg); }
+            50% { transform: scale(1.08) rotate(1deg); }
+            75% { transform: scale(1.05) rotate(-0.5deg); }
+        }
+
+        @keyframes explode {
+            0% { 
+                transform: scale(1); 
+                background: #dc3545;
+            }
+            50% { 
+                transform: scale(1.2); 
+                background: #ff4757;
+                box-shadow: 0 0 15px rgba(255, 71, 87, 0.8);
+            }
+            100% { 
+                transform: scale(1); 
+                background: #dc3545;
+            }
+        }
+
         @media (max-width: 600px) {
             body {
                 padding: 20px 10px;
@@ -211,6 +280,10 @@
             .controls {
                 flex-direction: column;
                 gap: 15px;
+            }
+            
+            .difficulty-presets {
+                order: -1;
             }
             
             .tile {
@@ -231,6 +304,12 @@
         <h1>Minesweeper</h1>
         
         <div class="controls">
+            <div class="difficulty-presets">
+                <button class="preset-btn" onclick="setDifficulty(9, 10)">Beginner</button>
+                <button class="preset-btn" onclick="setDifficulty(16, 40)">Intermediate</button>
+                <button class="preset-btn" onclick="setDifficulty(20, 99)">Expert</button>
+            </div>
+            
             <div class="game-config">
                 <label for="size">Size:</label>
                 <input type="number" id="size" value="10" min="5" max="20">
@@ -267,6 +346,18 @@
     <script>
         let currentGameId = null;
         let gameData = null;
+
+        function setDifficulty(size, mines) {
+            document.getElementById('size').value = size;
+            document.getElementById('mines').value = mines;
+            
+            // Update active preset button
+            document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Auto-start new game with preset
+            newGame();
+        }
 
         async function newGame() {
             const size = parseInt(document.getElementById('size').value);
@@ -351,6 +442,13 @@
             const board = document.getElementById('board');
             board.innerHTML = '';
             board.className = 'board';
+            
+            // Add celebration classes based on game state
+            if (game.game_state === 'Won') {
+                board.classList.add('game-won');
+            } else if (game.game_state === 'Lost') {
+                board.classList.add('game-lost');
+            }
 
             game.board.forEach((row, x) => {
                 const rowDiv = document.createElement('div');
