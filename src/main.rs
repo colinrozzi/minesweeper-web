@@ -14,7 +14,15 @@ use std::{
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
 
-type GameStorage = Arc<Mutex<HashMap<String, Minesweeper>>>;
+type GameStorage = Arc<Mutex<HashMap<String, GameInfo>>>;
+
+#[derive(Debug)]
+struct GameInfo {
+    game: Option<Minesweeper>,
+    size: usize,
+    mine_count: usize,
+    first_click_made: bool,
+}
 
 #[derive(Serialize, Deserialize)]
 struct NewGameRequest {
@@ -114,7 +122,7 @@ async fn serve_index() -> Html<String> {
             const game = await response.json();
             currentGameId = game.game_id;
             renderBoard(game);
-            document.getElementById('game-status').textContent = 'Game in progress';
+            document.getElementById('game-status').textContent = 'Game ready - click any tile to start!';
         }
         
         async function clickTile(x, y) {
@@ -183,18 +191,24 @@ async fn new_game(
     Json(req): Json<NewGameRequest>,
 ) -> Result<Json<GameResponse>, StatusCode> {
     let game_id = generate_game_id();
-    let mine_locations = generate_random_mines(req.size, req.mine_count);
-    let game = Minesweeper::new(req.size, mine_locations);
+    
+    // Create a placeholder game info - the actual game will be created on first click
+    let game_info = GameInfo {
+        game: None,
+        size: req.size,
+        mine_count: req.mine_count,
+        first_click_made: false,
+    };
     
     let response = GameResponse {
         game_id: game_id.clone(),
-        size: game.get_size(),
-        mine_count: game.get_bomb_count(),
-        game_state: format!("{:?}", game.get_game_state()),
-        board: serialize_board(&game),
+        size: req.size,
+        mine_count: req.mine_count,
+        game_state: "InProgress".to_string(),
+        board: create_empty_board_response(req.size),
     };
     
-    games.lock().unwrap().insert(game_id, game);
+    games.lock().unwrap().insert(game_id, game_info);
     Ok(Json(response))
 }
 
@@ -203,14 +217,20 @@ async fn get_game_state(
     Path(game_id): Path<String>,
 ) -> Result<Json<GameResponse>, StatusCode> {
     let games = games.lock().unwrap();
-    let game = games.get(&game_id).ok_or(StatusCode::NOT_FOUND)?;
+    let game_info = games.get(&game_id).ok_or(StatusCode::NOT_FOUND)?;
+    
+    let (game_state, board) = if let Some(ref game) = game_info.game {
+        (format!("{:?}", game.get_game_state()), serialize_board(game))
+    } else {
+        ("InProgress".to_string(), create_empty_board_response(game_info.size))
+    };
     
     let response = GameResponse {
         game_id,
-        size: game.get_size(),
-        mine_count: game.get_bomb_count(),
-        game_state: format!("{:?}", game.get_game_state()),
-        board: serialize_board(game),
+        size: game_info.size,
+        mine_count: game_info.mine_count,
+        game_state,
+        board,
     };
     
     Ok(Json(response))
@@ -221,9 +241,33 @@ async fn click_tile(
     Path((game_id, x, y)): Path<(String, usize, usize)>,
 ) -> Result<Json<ActionResponse>, StatusCode> {
     let mut games = games.lock().unwrap();
-    let game = games.get_mut(&game_id).ok_or(StatusCode::NOT_FOUND)?;
+    let game_info = games.get_mut(&game_id).ok_or(StatusCode::NOT_FOUND)?;
     
+    // If this is the first click, create the game now
+    if !game_info.first_click_made {
+        game_info.game = Some(Minesweeper::new_with_first_click(
+            game_info.size,
+            game_info.mine_count,
+            (x, y),
+        ));
+        game_info.first_click_made = true;
+        
+        // The first click is already processed by new_with_first_click
+        let game = game_info.game.as_ref().unwrap();
+        let response = ActionResponse {
+            success: true,
+            message: "First click processed! Game board generated.".to_string(),
+            game_state: format!("{:?}", game.get_game_state()),
+            board: serialize_board(game),
+        };
+        
+        return Ok(Json(response));
+    }
+    
+    // Normal click processing for subsequent clicks
+    let game = game_info.game.as_mut().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let result = game.click_tile(x, y);
+    
     let response = ActionResponse {
         success: result.is_ok(),
         message: result.err().unwrap_or_else(|| "Success".to_string()),
@@ -239,9 +283,22 @@ async fn toggle_flag(
     Path((game_id, x, y)): Path<(String, usize, usize)>,
 ) -> Result<Json<ActionResponse>, StatusCode> {
     let mut games = games.lock().unwrap();
-    let game = games.get_mut(&game_id).ok_or(StatusCode::NOT_FOUND)?;
+    let game_info = games.get_mut(&game_id).ok_or(StatusCode::NOT_FOUND)?;
     
+    // Can't flag before first click
+    if !game_info.first_click_made {
+        let response = ActionResponse {
+            success: false,
+            message: "Make your first click before flagging!".to_string(),
+            game_state: "InProgress".to_string(),
+            board: create_empty_board_response(game_info.size),
+        };
+        return Ok(Json(response));
+    }
+    
+    let game = game_info.game.as_mut().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let result = game.toggle_flag(x, y);
+    
     let response = ActionResponse {
         success: result.is_ok(),
         message: result.err().unwrap_or_else(|| "Success".to_string()),
@@ -281,6 +338,24 @@ fn serialize_board(game: &Minesweeper) -> Vec<Vec<TileResponse>> {
     board
 }
 
+fn create_empty_board_response(size: usize) -> Vec<Vec<TileResponse>> {
+    let mut board = Vec::new();
+    
+    for _ in 0..size {
+        let mut row = Vec::new();
+        for _ in 0..size {
+            row.push(TileResponse {
+                exposed: false,
+                flagged: false,
+                value: None,
+            });
+        }
+        board.push(row);
+    }
+    
+    board
+}
+
 fn generate_game_id() -> String {
     use rand::distributions::Alphanumeric;
     rand::thread_rng()
@@ -288,20 +363,4 @@ fn generate_game_id() -> String {
         .take(8)
         .map(char::from)
         .collect()
-}
-
-fn generate_random_mines(size: usize, mine_count: usize) -> Vec<(usize, usize)> {
-    let mut rng = rand::thread_rng();
-    let mut mines = Vec::new();
-    
-    while mines.len() < mine_count {
-        let x = rng.gen_range(0..size);
-        let y = rng.gen_range(0..size);
-        
-        if !mines.contains(&(x, y)) {
-            mines.push((x, y));
-        }
-    }
-    
-    mines
 }
