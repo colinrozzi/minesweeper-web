@@ -5,6 +5,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use axum_server::tls_rustls::RustlsConfig;
 use minesweeper::{Minesweeper, TileValue};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
+use axum::http::{Method, HeaderValue};
+use axum::http::header::CONTENT_TYPE;
 
 type GameStorage = Arc<Mutex<HashMap<String, GameInfo>>>;
 
@@ -68,12 +71,34 @@ async fn main() {
         .layer(CorsLayer::permissive())
         .with_state(games);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
-        .await
-        .unwrap();
+    // Check if we should use HTTPS
+    let use_https = std::env::var("USE_HTTPS").unwrap_or_else(|_| "false".to_string()) == "true";
     
-    println!("Server running on http://127.0.0.1:3000");
-    axum::serve(listener, app).await.unwrap();
+    if use_https {
+        // Production HTTPS
+        let cert_path = std::env::var("CERT_PATH").expect("CERT_PATH must be set when USE_HTTPS=true");
+        let key_path = std::env::var("KEY_PATH").expect("KEY_PATH must be set when USE_HTTPS=true");
+        
+        let config = RustlsConfig::from_pem_file(cert_path, key_path)
+            .await
+            .expect("Failed to load TLS certificates");
+
+        let addr = "0.0.0.0:443".parse().unwrap();
+        println!("HTTPS server running on https://0.0.0.0:443");
+        
+        axum_server::bind_rustls(addr, config)
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+    } else {
+        // Development HTTP
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+            .await
+            .unwrap();
+        
+        println!("HTTP server running on http://127.0.0.1:3000");
+        axum::serve(listener, app).await.unwrap();
+    }
 }
 
 async fn serve_index() -> Html<String> {
