@@ -53,9 +53,9 @@ async fn main() {
     let app = Router::new()
         .route("/", get(serve_index))
         .route("/api/new-game", post(new_game))
-        .route("/api/game/:game_id", get(get_game_state))
-        .route("/api/game/:game_id/click/:x/:y", post(click_tile))
-        .route("/api/game/:game_id/flag/:x/:y", post(toggle_flag))
+        .route("/api/game/{game_id}", get(get_game_state))
+        .route("/api/game/{game_id}/click/{x}/{y}", post(click_tile))
+        .route("/api/game/{game_id}/flag/{x}/{y}", post(toggle_flag))
         .nest_service("/static", ServeDir::new("static"))
         .layer(CorsLayer::permissive())
         .with_state(games);
